@@ -21,7 +21,7 @@ Los datos de la línea son de ejemplo.
 
 ## Dónde se ve
 
-Abajo a la derecha del pie del prompt, después de las etiquetas del modo de permisos. No aparece en la fila de `statusLine`: un plugin no puede fijarla, porque su `settings.json` solo admite `agent` y `subagentStatusLine`.
+Abajo a la derecha del pie del prompt, después de las etiquetas del modo de permisos. Si otro mod dibuja en la misma zona, como [contexto-tokens](https://github.com/wkielw2/claude-context-count), su contenido se conserva delante de las barras. No aparece en la fila de `statusLine`: un plugin no puede fijarla, porque su `settings.json` solo admite `agent` y `subagentStatusLine`.
 
 ## Instalación
 

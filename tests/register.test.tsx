@@ -18,7 +18,7 @@ type World = { clock: ReturnType<typeof mock.clock>; store: Record<string, unkno
 function world(
   on: On,
   rateLimits: SessionRateLimit[] = LIMITS,
-  options: { usageFails?: boolean; storeFails?: boolean } = {},
+  options: { usageFails?: boolean; storeFails?: boolean; opaqueFooter?: boolean } = {},
 ): World {
   const clock = mock.clock(on, { now: NOW })
   const store: Record<string, unknown> = {}
@@ -39,6 +39,8 @@ function world(
   })
   on('session.measure', (_$, e) => ({ changed: e.changed }))
   on('ui.render', ($, e) => {
+    // The real engine answers with its own opaque drawing, not with elements.
+    if (options.opaqueFooter) return { type: 'engine', ref: 0 } as never
     const { Box, Text } = $.ui.resolve(e)
 
     return 'hint' in e.props ? <Text>{e.props.hint}</Text> : <Box key="engine" />
@@ -138,6 +140,41 @@ test("keeps the engine's mode labels before the meter", async ($, on) => {
   expect(await ui.find({ key: 'engine' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: ' · ' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '5h ' })).toBeDefined()
+})
+
+test('keeps what the mods beneath draw even without mode labels', async ($, on) => {
+  world(on)
+  await startSession($)
+  const ui = await footer($)
+
+  expect(await ui.find({ key: 'engine' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '5h ' })).toBeDefined()
+})
+
+const SEPARATOR = { type: 'Text', text: ' · ' } as const
+
+test('with mode labels there is one more separator, before the meter', async ($, on) => {
+  world(on)
+  await startSession($)
+  const ui = await footer($, ['focus'])
+
+  expect(await ui.findAll(SEPARATOR)).toHaveLength(2)
+})
+
+test('what another mod draws beneath is kept and separated from the meter, even without mode labels', async ($, on) => {
+  const other = (mod: On) =>
+    mod('ui.render', { component: 'SessionMode' }, ($, e) => {
+      const { Text } = $.ui.resolve(e)
+
+      return <Text>ctx 12k</Text>
+    })
+  other(on)
+  world(on)
+  await startSession($)
+  const ui = await footer($)
+
+  expect(await ui.find({ type: 'Text', text: 'ctx 12k' })).toBeDefined()
+  expect(await ui.findAll(SEPARATOR)).toHaveLength(2)
 })
 
 test('a window past its reset shows as empty', async ($, on) => {
@@ -296,4 +333,20 @@ test('the clock keeps ticking when the store fails at start', async ($, on) => {
 
   expect(await ui.find({ type: 'Text', text: ' 0%' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: ' 87%' })).toBeDefined()
+})
+
+test("the engine's own footer without mode labels gets no separator before the meter", async ($, on) => {
+  world(on, LIMITS, { opaqueFooter: true })
+  await startSession($)
+  const ui = await footer($)
+
+  expect(await ui.findAll(SEPARATOR)).toHaveLength(1)
+})
+
+test("the engine's own footer with mode labels is separated from the meter", async ($, on) => {
+  world(on, LIMITS, { opaqueFooter: true })
+  await startSession($)
+  const ui = await footer($, ['focus'])
+
+  expect(await ui.findAll(SEPARATOR)).toHaveLength(2)
 })

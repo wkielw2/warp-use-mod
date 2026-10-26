@@ -67,7 +67,9 @@ export const register: Register = on => {
 
     await read($, now) // makes the render depend on the tick
     const time = await $.clock.now()
-    const labels = e.props.modes.length > 0 ? await next(e) : null
+    // Always composed, so the mods beneath keep drawing; core's own tree is only worth a separator when it has labels.
+    const beside = await next(e)
+    const hasBeside = beside.type !== 'engine' || e.props.modes.length > 0
     const { Box, Text } = $.ui.resolve(e)
     const [fiveHour, week] = segmentsOf(found, time)
 
@@ -90,8 +92,8 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="row">
-        {labels}
-        {labels ? <Text dimColor> · </Text> : null}
+        {beside}
+        {hasBeside ? <Text dimColor> · </Text> : null}
         {segmentView(fiveHour)}
         <Text dimColor> · </Text>
         {segmentView(week)}
