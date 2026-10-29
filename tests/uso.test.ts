@@ -2,6 +2,10 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { SessionRateLimit } from 'claude-code'
 
 import {
+  accountFilePath,
+  accountFitOf,
+  accountLabelOf,
+  accountOfConfig,
   barOf,
   clampPercent,
   formatReset,
@@ -9,6 +13,7 @@ import {
   levelOf,
   segmentOf,
   segmentsOf,
+  shortenEmail,
   windowsOf,
 } from '../hooks/uso'
 import type { UsageWindow } from '../types'
@@ -233,5 +238,203 @@ describe('casos límite adicionales', () => {
   test('isUsageWindowList rejects a list with one invalid item among valid ones', async () => {
     expect(isUsageWindowList([window(), { kind: 'five_hour' }])).toBe(false)
     expect(isUsageWindowList('texto')).toBe(false)
+  })
+})
+
+describe('accountFilePath', () => {
+  test('prefers the config dir and strips trailing slashes', async () => {
+    expect(accountFilePath('/perfiles/meso/', '/home/test')).toBe('/perfiles/meso/.claude.json')
+  })
+
+  test('falls back to home when the config dir is missing or blank', async () => {
+    expect(accountFilePath(undefined, '/home/test')).toBe('/home/test/.claude.json')
+    expect(accountFilePath('  ', '/home/test')).toBe('/home/test/.claude.json')
+  })
+
+  test('is undefined without any directory', async () => {
+    expect(accountFilePath('', undefined)).toBeUndefined()
+  })
+})
+
+describe('accountLabelOf', () => {
+  test('trims and keeps both parts', async () => {
+    expect(accountLabelOf({ email: ' persona@ejemplo.com\n', organization: 'Ejemplo S.L.' })).toEqual({
+      email: 'persona@ejemplo.com',
+      organization: 'Ejemplo S.L.',
+    })
+  })
+
+  test('omits an organization that repeats the email, ignoring case', async () => {
+    expect(
+      accountLabelOf({ email: 'persona@ejemplo.com', organization: "Persona@Ejemplo.com's Organization" }),
+    ).toEqual({ email: 'persona@ejemplo.com' })
+  })
+
+  test('keeps only the organization when there is no email', async () => {
+    expect(accountLabelOf({ organization: 'Ejemplo S.L.' })).toEqual({ organization: 'Ejemplo S.L.' })
+  })
+
+  test('returns null for empty, blank or non-string values', async () => {
+    expect(accountLabelOf({ email: '', organization: '  ' })).toBeNull()
+    expect(accountLabelOf({ email: 42 })).toBeNull()
+    expect(accountLabelOf({})).toBeNull()
+  })
+
+  test('does not alter non-Latin organizations', async () => {
+    expect(accountLabelOf({ organization: '株式会社サンプル' })).toEqual({ organization: '株式会社サンプル' })
+    expect(accountLabelOf({ organization: 'Пример ООО' })).toEqual({ organization: 'Пример ООО' })
+  })
+
+  test('strips control characters', async () => {
+    const label = accountLabelOf({ email: 'per\tsona@ejemplo.com', organization: 'Ej\u001b[31mem\u2028plo' })
+
+    expect(label).toEqual({ email: 'persona@ejemplo.com', organization: 'Ej[31memplo' })
+    expect(JSON.stringify(label)).not.toMatch(/[\u0000-\u001F\u007F-\u009F]/)
+  })
+
+  test('strips invisible and bidi format characters', async () => {
+    const label = accountLabelOf({ email: 'persona​@ejemplo.com﻿', organization: 'Ejemplo‮ S.L.⁦' })
+
+    expect(label).toEqual({ email: 'persona@ejemplo.com', organization: 'Ejemplo S.L.' })
+  })
+})
+
+describe('accountOfConfig', () => {
+  test('extracts the label from a complete config and nothing else', async () => {
+    const text = JSON.stringify({
+      numStartups: 3,
+      oauthAccount: { emailAddress: 'persona@ejemplo.com', organizationName: 'Ejemplo S.L.', accountUuid: 'x' },
+      primaryApiKey: 'sk-ficticia',
+      mcpServers: { demo: { command: 'demo', env: { TOKEN: 'token-ficticio' } } },
+    })
+
+    const label = accountOfConfig(text)
+
+    expect(label).toEqual({ email: 'persona@ejemplo.com', organization: 'Ejemplo S.L.' })
+    expect(JSON.stringify(label)).not.toMatch(/ficti|accountUuid|mcpServers/)
+  })
+
+  test('returns null for invalid JSON, missing or null oauthAccount and numeric fields', async () => {
+    expect(accountOfConfig('{no es json')).toBeNull()
+    expect(accountOfConfig('{}')).toBeNull()
+    expect(accountOfConfig('null')).toBeNull()
+    expect(accountOfConfig('{"oauthAccount":null}')).toBeNull()
+    expect(accountOfConfig('{"oauthAccount":"texto"}')).toBeNull()
+    expect(accountOfConfig('{"oauthAccount":{"emailAddress":1,"organizationName":2}}')).toBeNull()
+  })
+})
+
+describe('shortenEmail', () => {
+  test('keeps the domain and cuts the local part', async () => {
+    expect(shortenEmail('persona.larguisimo@ejemplo.com', 25)).toBe('persona.larg…@ejemplo.com')
+  })
+
+  test('leaves an email that fits', async () => {
+    expect(shortenEmail('persona@ejemplo.com', 25)).toBe('persona@ejemplo.com')
+  })
+
+  test('cuts in the middle when the domain does not fit', async () => {
+    const short = shortenEmail('ana@departamento.ejemplo-corporativo.com', 18)
+
+    expect(short).toBe('ana@depar…tivo.com')
+    expect(short).toHaveLength(18)
+  })
+
+  test('returns non-ASCII emails unchanged', async () => {
+    expect(shortenEmail('界界界界界界界界界界@ejemplo.com', 10)).toBe('界界界界界界界界界界@ejemplo.com')
+  })
+})
+
+describe('accountFitOf', () => {
+  const label = { email: 'persona.larguisimo@ejemplo.com', organization: 'Ejemplo S.L.' }
+
+  test('keeps everything on wide terminals or without columns', async () => {
+    expect(accountFitOf(label, 150)).toEqual({ ...label, stacked: false })
+    expect(accountFitOf(label)).toEqual({ ...label, stacked: false })
+  })
+
+  test('drops the organization below 100 columns without stacking from 80', async () => {
+    expect(accountFitOf(label, 90)).toEqual({ email: label.email, stacked: false })
+  })
+
+  test('stacks below 80 columns and shortens the email to the available width', async () => {
+    const fit = accountFitOf(label, 45)
+
+    expect(fit).toEqual({ email: 'persona.larg…@ejemplo.com', stacked: true })
+    expect(fit.email?.length).toBeLessThanOrEqual(25)
+    expect(accountFitOf(label, 38).email?.length).toBeLessThanOrEqual(18)
+  })
+
+  test('never goes under the minimum email width', async () => {
+    expect(accountFitOf(label, 20).email?.length).toBe(12)
+  })
+
+  test('keeps an organization-only label, stacked when narrow', async () => {
+    expect(accountFitOf({ organization: 'Ejemplo S.L.' }, 45)).toEqual({ organization: 'Ejemplo S.L.', stacked: true })
+  })
+})
+
+describe('límites de las cuentas (casos añadidos)', () => {
+  const label = { email: 'persona.larguisimo@ejemplo.com', organization: 'Ejemplo S.L.' }
+
+  test('accountFitOf: exactly 100 columns keeps the organization, 99 drops it', async () => {
+    expect(accountFitOf(label, 100)).toEqual({ ...label, stacked: false })
+    expect(accountFitOf(label, 99)).toEqual({ email: label.email, stacked: false })
+  })
+
+  test('accountFitOf: exactly 80 columns does not stack, 79 does', async () => {
+    expect(accountFitOf(label, 80).stacked).toBe(false)
+    expect(accountFitOf(label, 79).stacked).toBe(true)
+  })
+
+  test('accountFitOf: an organization-only label is kept whole between 80 and 99 columns', async () => {
+    expect(accountFitOf({ organization: 'Ejemplo S.L.' }, 90)).toEqual({ organization: 'Ejemplo S.L.', stacked: false })
+  })
+
+  test('accountFitOf: an email that fits in the available cells is not shortened', async () => {
+    expect(accountFitOf({ email: 'persona@ejemplo.com' }, 60)).toEqual({ email: 'persona@ejemplo.com', stacked: true })
+  })
+
+  test('shortenEmail: an email without "@" is cut in the middle', async () => {
+    const short = shortenEmail('personasinarrobamuylarga', 10)
+
+    expect(short).toHaveLength(10)
+    expect(short).toBe('perso…arga')
+  })
+
+  test('shortenEmail: never goes under 3 cells', async () => {
+    expect(shortenEmail('persona@ejemplo.com', 0)).toHaveLength(3)
+    expect(shortenEmail('persona@ejemplo.com', -5)).toHaveLength(3)
+  })
+
+  test('shortenEmail: keeps the domain when it leaves exactly one character of local part', async () => {
+    const short = shortenEmail('persona@ejemplo.com', 14)
+
+    expect(short).toBe('p…@ejemplo.com')
+  })
+
+  test('shortenEmail: a domain too long for the width falls back to cutting in the middle', async () => {
+    const short = shortenEmail('a@dominio-larguisimo.ejemplo.com', 10)
+
+    expect(short).toHaveLength(10)
+    expect(short).not.toMatch(/^a@dominio-larguisimo/)
+    expect(short).toContain('…')
+  })
+
+  test('accountOfConfig: a JSON array or a scalar at the root gives null', async () => {
+    expect(accountOfConfig('[]')).toBeNull()
+    expect(accountOfConfig('"texto"')).toBeNull()
+    expect(accountOfConfig('42')).toBeNull()
+    expect(accountOfConfig('')).toBeNull()
+  })
+
+  test('accountOfConfig: an organization-only account is kept', async () => {
+    expect(accountOfConfig('{"oauthAccount":{"organizationName":"Ejemplo S.L."}}')).toEqual({
+      organization: 'Ejemplo S.L.',
+    })
+  })
+
+  test('accountLabelOf: an email made only of invisible characters leaves the organization', async () => {
+    expect(accountLabelOf({ email: '​‮', organization: 'Ejemplo S.L.' })).toEqual({ organization: 'Ejemplo S.L.' })
   })
 })

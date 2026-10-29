@@ -1,6 +1,6 @@
 {
   "name": "uso-suscripcion",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Subscription usage in the prompt footer: the 5-hour and weekly windows side by side, with bar, percentage and reset time. / Uso de la suscripción en el pie del prompt: las ventanas de 5 horas y semanal a la vez.",
   "author": {
     "name": "Jose Miniñi Diego"
