@@ -1,15 +1,10 @@
 import type { SessionRateLimit } from 'claude-code'
 
-import type { AccountFit, AccountLabel, UsageLevel, UsageSegment, UsageWindow, WindowKind } from '../types'
+import type { UsageLevel, UsageSegment, UsageWindow, WindowKind } from '../types'
 
 export const WINDOWS: readonly WindowKind[] = ['five_hour', 'seven_day']
 export const LABELS: Record<WindowKind, string> = { five_hour: '5h', seven_day: 'semana' }
 export const BAR_WIDTH = 10
-export const ACCOUNT_FILE = '.claude.json'
-export const ORG_MIN_COLUMNS = 100
-export const STACK_BELOW_COLUMNS = 80
-export const EMAIL_RESERVED_CELLS = 20
-export const EMAIL_MIN_CELLS = 12
 
 const WEEKDAYS = ['dom.', 'lun.', 'mar.', 'mié.', 'jue.', 'vie.', 'sáb.']
 const ENGLISH_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -98,90 +93,3 @@ export const segmentsOf = (limits: UsageWindow[], now: number, timeZone?: string
       timeZone,
     ),
   )
-
-/**
- * Path of the active profile's account file (POSIX only). `configDir` (`CLAUDE_CONFIG_DIR`) wins
- * over `home`, unless blank; undefined when neither directory is known.
- */
-export const accountFilePath = (configDir?: string, home?: string): string | undefined => {
-  const dir = configDir?.trim() ? configDir.trim() : home
-  if (!dir) return undefined
-
-  return `${dir.replace(/\/+$/, '')}/${ACCOUNT_FILE}`
-}
-
-// C0/C1 controls, DEL, invisible and bidi format characters, and the Unicode line/paragraph separators.
-const CONTROL_CHARS = /[\p{Cc}\p{Cf}\u2028\u2029]/gu
-
-const cleanText = (value: unknown): string | undefined => {
-  if (typeof value !== 'string') return undefined
-  const cleaned = value.replace(CONTROL_CHARS, '').trim()
-
-  return cleaned === '' ? undefined : cleaned
-}
-
-/**
- * Sanitises an untyped email/organization pair; null when nothing usable remains.
- * The organization is dropped when it only repeats the email.
- */
-export const accountLabelOf = (raw: { email?: unknown; organization?: unknown }): AccountLabel | null => {
-  const email = cleanText(raw.email)
-  let organization = cleanText(raw.organization)
-  // Personal accounts get an organization name that just repeats the email.
-  if (email && organization?.toLowerCase().includes(email.toLowerCase())) organization = undefined
-  if (!email && !organization) return null
-
-  return { ...(email && { email }), ...(organization && { organization }) }
-}
-
-/**
- * Reads only `oauthAccount`'s email and organization from the text of `.claude.json`; any other
- * field (tokens, ids) is never looked at. Never throws: invalid JSON or a missing login gives null.
- */
-export const accountOfConfig = (text: string): AccountLabel | null => {
-  let config: unknown
-  try {
-    config = JSON.parse(text)
-  } catch {
-    return null
-  }
-  const oauthAccount = typeof config === 'object' && config !== null ? (config as Record<string, unknown>).oauthAccount : undefined
-  if (typeof oauthAccount !== 'object' || oauthAccount === null) return null
-  const account = oauthAccount as Record<string, unknown>
-
-  return accountLabelOf({ email: account.emailAddress, organization: account.organizationName })
-}
-
-/**
- * Shortens an email to at most `maxCells` characters, keeping the domain when possible.
- * Emails with non-ASCII characters are returned unchanged: characters are not cells
- * (CJK takes two), so the terminal truncates them (`wrap="truncate-middle"`).
- */
-export const shortenEmail = (email: string, maxCells: number): string => {
-  if (/[^ -~]/.test(email)) return email
-  const max = Math.max(3, maxCells)
-  if (email.length <= max) return email
-
-  const at = email.lastIndexOf('@')
-  const domain = at > 0 ? email.slice(at) : ''
-  if (domain && domain.length + 2 <= max) return `${email.slice(0, max - domain.length - 1)}…${domain}`
-
-  const head = Math.ceil((max - 1) / 2)
-  const tail = max - 1 - head
-
-  return `${email.slice(0, head)}…${tail > 0 ? email.slice(-tail) : ''}`
-}
-
-/**
- * Decides what to paint of the account for the terminal width, and whether it stacks above the bars.
- * From `ORG_MIN_COLUMNS` up (or with unknown width) everything is kept; below it the organization is
- * hidden and the email shortened (only when there is an email); below `STACK_BELOW_COLUMNS` it also stacks.
- */
-export const accountFitOf = (label: AccountLabel, columns?: number): AccountFit => {
-  if (columns === undefined || columns >= ORG_MIN_COLUMNS) return { ...label, stacked: false }
-
-  const stacked = columns < STACK_BELOW_COLUMNS
-  if (!label.email) return { ...label, stacked }
-
-  return { email: shortenEmail(label.email, Math.max(EMAIL_MIN_CELLS, columns - EMAIL_RESERVED_CELLS)), stacked }
-}
